@@ -1,0 +1,123 @@
+name: Input_docker_pipeline
+identifier: Input_docker_pipeline
+inputs:
+  ref: main
+  overlay:
+    id: python_docker_pipeline_git
+    name: python-docker-pipeline-git
+    description: Build, test, and push a Python app image to Docker Hub on Harness Cloud
+    tags:
+      ai_generated: ""
+    inputs:
+      ref:
+        type: string
+        required: true
+        description: Branch or tag to check out
+    clone:
+      enabled: true
+      connector: connector_Github_mohiuddingolam
+      repo: mohiuddingolam/Harness-CI-CD-Zero-to-Hero
+      ref: ${{ inputs.ref }}
+    stages:
+      - id: build_python
+        name: build-python
+        description: Build, test, and push to Docker Hub
+        runtime: cloud
+        platform:
+          os: linux
+          arch: amd64
+        steps:
+          - id: install_deps
+            name: Install Dependencies
+            run:
+              script: |-
+                echo "=== Step 1: Installing Dependencies ==="
+                cd Episode-02/python-project
+                pip install -r requirements.txt
+                echo "=== Dependencies Installed! ==="
+          - id: run_tests
+            name: Run Tests
+            run:
+              script: |-
+                echo "=== Step 2: Running Unit Tests ==="
+                cd Episode-02/python-project
+                pip install -r requirements.txt
+                pytest test_app.py -v
+                echo "=== All 3 Tests Passed! ==="
+          - id: run_app
+            name: Run App
+            run:
+              script: >-
+                echo "=== Step 3: Verifying App Works ==="
+
+                cd Episode-02/python-project
+
+                pip install -r requirements.txt
+
+                python -c "from app import app; client = app.test_client(); r =
+                client.get('/'); print(r.get_json()); r = client.get('/health');
+                print(r.get_json()); print('=== App Verified! ===')"
+          - id: build_push_docker
+            name: Build and Push to Docker Hub
+            build:
+              uses: buildAndPushToDocker
+              with:
+                connector: dockerhub
+                repo: <+variable.docker_username>/python-harness-app
+                tags:
+                  - <+pipeline.sequenceId>
+                  - latest
+                dockerfile: Episode-02/python-project/Dockerfile
+                context: Episode-02/python-project
+          - id: verify_push
+            name: Verify Push
+            run:
+              script: |-
+                echo "========================================="
+                echo "  Step 5: Image Pushed Successfully!"
+                echo ""
+                echo "  Image: <+variable.docker_username>/python-harness-app:<+pipeline.sequenceId>"
+                echo "  Image: <+variable.docker_username>/python-harness-app:latest"
+                echo ""
+                echo "  View: https://hub.docker.com/r/<+variable.docker_username>/python-harness-app"
+                echo "========================================="
+          - id: wait_before_cleanup
+            name: Wait Before Cleanup
+            run:
+              script: |-
+                echo "=== Step 6: Waiting 1 minute ==="
+                echo "Giving Docker Hub time to process the push..."
+                sleep 60
+                echo "=== Done waiting! Proceeding to cleanup ==="
+          - id: delete_and_verify
+            name: Delete and Verify
+            run:
+              script: |-
+                echo "=== Step 7: Deleting Docker Hub Image ==="
+                echo ""
+                TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username":"<+variable.docker_username>","password":"<+secrets.getValue("docker-hub-password")>"}' https://hub.docker.com/v2/users/login/ | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+                echo "Logged in to Docker Hub API"
+                echo ""
+                echo "Deleting entire repository: <+variable.docker_username>/python-harness-app"
+                curl -s -X DELETE -H "Authorization: JWT $TOKEN" https://hub.docker.com/v2/repositories/<+variable.docker_username>/python-harness-app/
+                echo ""
+                echo "=== Repository Deleted! ==="
+                echo "Next run will create it fresh again."
+          - id: final_verify
+            name: Final Verify
+            run:
+              script: |-
+                echo "=== Step 8: Final Verification ==="
+                echo ""
+                echo "Checking if repository still exists on Docker Hub..."
+                echo ""
+                STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://hub.docker.com/v2/repositories/<+variable.docker_username>/python-harness-app/)
+                if [ "$STATUS" = "404" ]; then
+                  echo "Repository python-harness-app - DELETED (not found)"
+                else
+                  echo "Repository may still exist (status: $STATUS)"
+                fi
+                echo ""
+                echo "========================================="
+                echo "  ALL DONE!"
+                echo "========================================="
